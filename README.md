@@ -1,1 +1,0 @@
-# T.C.-T-B-TAK-2204-B-T-D-Klavye-Sign2Key-T-rk-aret-Dili-Sanal-Klavye-Asistan-
