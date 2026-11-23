@@ -1,93 +1,83 @@
 """
-Klavye Enjeksiyon Modülü (Keyboard Injector)
-Linux ve Windows ortamlarında sanal tuş vuruşları üreterek
-WhatsApp, Not Defteri veya aktif olan herhangi bir metin alanına metin yazar.
+TİD-Klavye - Klavye Enjeksiyonu
+pynput kullanarak sistem klavyesine karakter gönderir.
+X display yoksa (headless/CLI mod) simüle eder.
 """
 
+import sys
+import os
 import time
-import threading
-from typing import Optional
-from pynput.keyboard import Controller, Key
+import logging
 
+logger = logging.getLogger(__name__)
 
 class KeyboardInjector:
-    def __init__(self, char_delay: float = 0.03, word_delay: float = 0.2):
-        """
-        :param char_delay: Harfler arasındaki yazım gecikmesi (saniye)
-        :param word_delay: Kelimeler arasındaki minimum bekleme süresi (spam engelleme)
-        """
-        self.keyboard = Controller()
-        self.char_delay = char_delay
-        self.word_delay = word_delay
-        self.last_typed_time = 0.0
-        self.last_text: Optional[str] = None
-        self._lock = threading.Lock()
-        self.enabled = True
+    def __init__(self):
+        self.keyboard = None
+        self.Key = None
+        self._headless = False
+        self._init_keyboard()
 
-    def set_enabled(self, enabled: bool):
-        """Klavye yazma özelliğini aktif veya pasif yapar."""
-        self.enabled = enabled
+    def _init_keyboard(self):
+        """pynput'u başlat; X yoksa headless moda geç."""
+        try:
+            from pynput.keyboard import Controller, Key
+            self.keyboard = Controller()
+            self.Key = Key
+            if sys.platform == "win32":
+                self._warmup()
+            logger.info("Klavye enjektörü hazır.")
+        except Exception as e:
+            logger.warning(f"pynput başlatılamadı (headless mod): {e}")
+            self._headless = True
 
-    def type_text(self, text: str, append_space: bool = True, auto_send: bool = False) -> bool:
-        """
-        Verilen metni o anda imlecin bulunduğu aktif alana yazar.
-        :param text: Yazılacak kelime veya harf
-        :param append_space: Kelime sonuna otomatik boşluk eklensin mi?
-        :param auto_send: Metin yazıldıktan sonra 'Enter' basılıp gönderilsin mi? (örn. WhatsApp mesajı)
-        :return: Başarılı yazıldıysa True, bekleme süresine takıldıysa False
-        """
-        if not self.enabled or not text:
-            return False
+    def _warmup(self):
+        """Windows'ta pynput Controller'ı ön-ısıt."""
+        try:
+            import threading
+            def _warm():
+                time.sleep(0.1)
+            t = threading.Thread(target=_warm, daemon=True)
+            t.start()
+        except Exception:
+            pass
 
-        current_time = time.time()
-        with self._lock:
-            # Aynı kelimenin istenmeden art arda yazılmasını önle
-            if current_time - self.last_typed_time < self.word_delay:
-                return False
-
-            self.last_typed_time = current_time
-            self.last_text = text
-
-            to_type = text + (" " if append_space else "")
-
-            # Karakter karakter doğal yazım simülasyonu
-            for char in to_type:
-                self.keyboard.type(char)
-                if self.char_delay > 0:
-                    time.sleep(self.char_delay)
-
-            if auto_send:
-                time.sleep(0.05)
-                self.keyboard.press(Key.enter)
-                self.keyboard.release(Key.enter)
-
-            return True
-
-    def backspace(self):
-        """Son yazılan karakteri siler."""
-        if not self.enabled:
+    def type_text(self, text: str):
+        """Metni klavye aracılığıyla yaz."""
+        if self._headless or self.keyboard is None:
+            # Headless modda sadece logla
+            logger.info(f"[HEADLESS] Klavye çıktısı: {repr(text)}")
+            print(f"[Klavye] → {text}")
             return
-        self.keyboard.press(Key.backspace)
-        self.keyboard.release(Key.backspace)
+        try:
+            if sys.platform == "win32":
+                self.keyboard.type(text)
+            else:
+                for char in text:
+                    self.keyboard.type(char)
+                    time.sleep(0.01)
+        except Exception as e:
+            logger.error(f"Yazma hatası: {e}")
 
-    def press_enter(self):
-        """Enter tuşuna basarak mesajı gönderir veya yeni satıra geçer."""
-        if not self.enabled:
+    def press_key(self, key_name: str):
+        """Özel tuş bas (backspace, enter, space vb.)."""
+        if self._headless or self.keyboard is None or self.Key is None:
+            logger.info(f"[HEADLESS] Tuş basıldı: {key_name}")
+            print(f"[Klavye] → <{key_name}>")
             return
-        self.keyboard.press(Key.enter)
-        self.keyboard.release(Key.enter)
-
-    def press_space(self):
-        """Boşluk tuşuna basar."""
-        if not self.enabled:
-            return
-        self.keyboard.press(Key.space)
-        self.keyboard.release(Key.space)
-
-
-# Modül testi
-if __name__ == "__main__":
-    injector = KeyboardInjector()
-    print("Klavye test ediliyor: 3 saniye sonra odaklanılan yere 'TİD Test' yazılacak...")
-    time.sleep(3)
-    injector.type_text("TİD Test Başarılı!", append_space=True)
+        key_map = {
+            "backspace": self.Key.backspace,
+            "enter":     self.Key.enter,
+            "space":     self.Key.space,
+            "tab":       self.Key.tab,
+            "escape":    self.Key.esc,
+        }
+        key = key_map.get(key_name.lower())
+        if key:
+            try:
+                self.keyboard.press(key)
+                self.keyboard.release(key)
+            except Exception as e:
+                logger.error(f"Tuş basma hatası: {e}")
+        else:
+            logger.warning(f"Bilinmeyen tuş: {key_name}")
